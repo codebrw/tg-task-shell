@@ -3,6 +3,8 @@ package server
 import (
 	"log/slog"
 	"tg-task-shell/config"
+	"tg-task-shell/shell"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -16,12 +18,19 @@ func New(config *config.Config) *Server {
 	}
 }
 
-func (s *Server) Start() error {
+func (s *Server) Start(c chan shell.Command) error {
 	// TODO
 	bot, err := tgbotapi.NewBotAPI(s.config.TG_API_TOKEN)
     if err != nil {
         return err
     }
+
+    tasks := make(map[string]config.Task)
+
+    for _, task := range s.config.Tasks {
+        tasks[task.Name] = task
+    }
+
 
     bot.Debug = true
 
@@ -46,14 +55,28 @@ func (s *Server) Start() error {
         msg := tgbotapi.NewMessage(update.Message.Chat.ID, "")
 
         // Extract the command from the Message.
-        switch update.Message.Command() {
-        case "help":
-            msg.Text = "I understand /sayhi and /status."
-        case "sayhi":
-            msg.Text = "Hi :)"
-        case "status":
-            msg.Text = "I'm ok."
-        default:
+        cmd := update.Message.Command()
+
+        if task, ok := tasks[cmd]; ok {
+            values, err := task.ParseParamValues(cmd[len(task.Name):])
+            if err != nil {
+                slog.Error("failed to parse parameters", "err", err)
+            }
+            
+            args := func () []string {
+                result := make([]string, len(values))
+                for _, value := range values {
+                    result = append(result, value.Value)
+                }
+                return result
+            }()
+
+            c <- shell.Command{Name: task.Command, Args: args} 
+
+            msg.Text = "OK"
+
+        } else {
+            slog.Warn("unknown command", "command", cmd)
             msg.Text = "I don't know that command"
         }
 
